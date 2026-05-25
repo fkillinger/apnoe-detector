@@ -183,7 +183,7 @@
     <button id="btn-reset" title="Reset">&#8634;</button>
   </div>
 
-  <div id="version">v1.4</div>
+  <div id="version">v1.4.1</div>
 </div>
 
 <script>
@@ -494,7 +494,9 @@
   function useSavedCalib() {
     document.getElementById('calib-dialog').style.display = 'none';
     const saved = loadCalib();
-    calibDone = false; // damit applyCalib sauber setzt
+    breathTimestamps = []; lastWasBreath = false;
+    pauseActive = false; pauseStart = null; pauseAlpha = 0;
+    calibDone = false;
     applyCalib(saved.baseThreshold, saved.dynamicMax);
     startSampling();
   }
