@@ -153,7 +153,7 @@
     <button id="btn-reset" title="Reset">&#8634;</button>
   </div>
 
-  <div id="version">v1.2</div>
+  <div id="version">v1.3</div>
 </div>
 
 <script>
@@ -164,11 +164,9 @@
   const CALIB_SAMPLES = CALIB_S * SAMPLE_HZ;
   const PAUSE_MIN_S   = 10;
   const GAIN_BOOST    = 10;
-  const BPM_WINDOW_S  = 60;   // Flanken in letzten 60s zählen
+  const BPM_WINDOW_S  = 60;
 
-  // Slider 1..20 → Multiplikator, feiner abgestuft um 1.0
   function sliderToMult(v) {
-    // 1=0.25, 10=1.0, 20=3.0 – logarithmisch
     return Math.pow(10, (v - 10) / 10 * Math.log10(12));
   }
   function sliderLabel(v) {
@@ -191,11 +189,11 @@
   let threshold     = 0.01;
   let calibBuf      = [];
   let calibDone     = false;
+  let calibEndTime  = null;
   let dynamicMax    = 0.02;
   let pauseActive   = false, pauseStart = null;
+  let pauseAlpha    = 0;           // 0..1 – aktuelle Rotintensität
   let events = [], longestPause = 0;
-
-  // Atemfrequenz: Zeitstempel jeder steigenden Flanke (unter→über Schwellwert)
   let breathTimestamps = [];
   let lastWasBreath    = false;
 
@@ -222,19 +220,30 @@
   }
 
   function updateBpm() {
-    const now    = Date.now();
-    const cutoff = now - BPM_WINDOW_S * 1000;
+    if (!calibEndTime) return;
+    const now        = Date.now();
+    const elapsedMin = Math.min((now - calibEndTime) / 60000, 1);
+    if (elapsedMin <= 0) return;
+    const cutoff     = now - BPM_WINDOW_S * 1000;
     breathTimestamps = breathTimestamps.filter(t => t > cutoff);
-    const bpm    = breathTimestamps.length;
-    const el     = document.getElementById('stat-bpm-val');
-    el.textContent = bpm;
-    el.className = bpm === 0 ? '' : bpm < 8 ? 'slow' : bpm > 20 ? 'fast' : '';
+    const bpm        = Math.round(breathTimestamps.length / elapsedMin);
+    const el         = document.getElementById('stat-bpm-val');
+    el.textContent   = bpm;
+    el.className     = bpm === 0 ? '' : bpm < 8 ? 'slow' : bpm > 20 ? 'fast' : '';
   }
 
   function drawGraph() {
     const W = canvas.width, H = canvas.height;
     ctx2d.clearRect(0, 0, W, H);
 
+    // Hintergrund – rot tönen wenn Pause aktiv
+    if (pauseAlpha > 0) {
+      const a = Math.round(pauseAlpha * 30).toString(16).padStart(2,'0');
+      ctx2d.fillStyle = '#ef4444' + a;
+      ctx2d.fillRect(0, 0, W, H);
+    }
+
+    // Gitterlinien
     ctx2d.strokeStyle = '#0d1825'; ctx2d.lineWidth = 0.5;
     for (let i = 1; i < 4; i++) {
       const y = Math.round(H * i / 4) + 0.5;
@@ -245,6 +254,7 @@
       ctx2d.beginPath(); ctx2d.moveTo(x, 0); ctx2d.lineTo(x, H); ctx2d.stroke();
     }
 
+    // Schwellwert-Linie
     if (calibDone && dynamicMax > 0) {
       const ty = H - (threshold / dynamicMax) * H * 0.88 - H * 0.04;
       if (ty > 2 && ty < H - 2) {
@@ -255,16 +265,10 @@
       }
     }
 
-    if (pauseActive && calibDone) {
-      const dur = (Date.now() - pauseStart) / 1000;
-      if (dur > 3) {
-        const px = Math.min(Math.round(dur * SAMPLE_HZ), TOTAL_SAMPLES);
-        ctx2d.fillStyle = '#ef444410';
-        ctx2d.fillRect(W * (1 - px / TOTAL_SAMPLES), 0, W, H);
-      }
-    }
-
-    ctx2d.beginPath(); ctx2d.strokeStyle = '#3b82f6'; ctx2d.lineWidth = 1.5;
+    // Signalkurve – bei Pause rot, sonst blau
+    ctx2d.beginPath();
+    ctx2d.strokeStyle = pauseAlpha > 0.3 ? '#ef6060' : '#3b82f6';
+    ctx2d.lineWidth = 1.5;
     let first = true;
     for (let i = 0; i < TOTAL_SAMPLES; i++) {
       const val  = history[(writeIdx + i) % TOTAL_SAMPLES];
@@ -312,6 +316,7 @@
         threshold     = baseThreshold * sliderToMult(parseInt(thrSlider.value));
         dynamicMax    = Math.max(sorted[Math.floor(sorted.length * 0.98)] * 2.5, threshold * 4, 0.01);
         calibDone     = true;
+        calibEndTime  = Date.now();
         document.getElementById('calib-wrap').style.display = 'none';
         document.getElementById('thr-wrap').style.display   = 'flex';
         document.getElementById('status-text').textContent  = 'überwachung aktiv';
@@ -322,10 +327,7 @@
       const dot  = document.getElementById('breath-dot');
       const stxt = document.getElementById('status-text');
 
-      // steigende Flanke → neuer Atemzug
-      if (isBreath && !lastWasBreath) {
-        breathTimestamps.push(Date.now());
-      }
+      if (isBreath && !lastWasBreath) breathTimestamps.push(Date.now());
       lastWasBreath = isBreath;
       updateBpm();
 
@@ -335,15 +337,24 @@
           if (dur >= PAUSE_MIN_S) logEvent(dur);
           pauseActive = false; pauseStart = null;
         }
+        // Rotton langsam ausblenden
+        pauseAlpha = Math.max(0, pauseAlpha - 0.08);
         dot.className    = 'active';
         stxt.textContent = 'atem erkannt';
       } else {
         if (!pauseActive) { pauseActive = true; pauseStart = Date.now(); }
         const dur = (Date.now() - pauseStart) / 1000;
+        // Rotton einblenden: ab PAUSE_MIN_S voll, davor proportional ab 3s
         if (dur >= PAUSE_MIN_S) {
+          pauseAlpha = Math.min(1, pauseAlpha + 0.05);
           dot.className    = 'pause';
           stxt.textContent = 'pause: ' + dur.toFixed(0) + 's';
+        } else if (dur > 3) {
+          pauseAlpha = (dur - 3) / (PAUSE_MIN_S - 3) * 0.4;
+          dot.className    = '';
+          stxt.textContent = 'kein atem';
         } else {
+          pauseAlpha = 0;
           dot.className    = '';
           stxt.textContent = 'kein atem';
         }
@@ -383,8 +394,8 @@
         if (audioCtx && audioCtx.state !== 'running') audioCtx.resume();
       }, 1000);
 
-      running = true; calibDone = false; calibBuf = [];
-      dynamicMax = 0.02; pauseActive = false; pauseStart = null;
+      running = true; calibDone = false; calibBuf = []; calibEndTime = null;
+      dynamicMax = 0.02; pauseActive = false; pauseStart = null; pauseAlpha = 0;
       breathTimestamps = []; lastWasBreath = false;
 
       document.getElementById('calib-wrap').style.display  = 'flex';
@@ -394,6 +405,7 @@
       document.getElementById('btn-start').textContent     = '■ Stop';
       document.getElementById('btn-start').classList.add('running');
       document.getElementById('stat-bpm-val').textContent  = '--';
+      document.getElementById('stat-bpm-val').className    = '';
 
       sampleInterval = setInterval(takeSample, 1000 / SAMPLE_HZ);
       rafId = requestAnimationFrame(renderLoop);
@@ -420,8 +432,8 @@
   function resetAll() {
     stopMonitor();
     history = new Float32Array(TOTAL_SAMPLES);
-    writeIdx = 0; dynamicMax = 0.02;
-    calibDone = false; calibBuf = [];
+    writeIdx = 0; dynamicMax = 0.02; pauseAlpha = 0;
+    calibDone = false; calibBuf = []; calibEndTime = null;
     pauseActive = false; pauseStart = null;
     events = []; longestPause = 0;
     breathTimestamps = []; lastWasBreath = false;
