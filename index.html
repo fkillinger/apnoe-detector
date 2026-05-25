@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+    <title>Apnoe Monitor – Audio Diagnose</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background: #0a0e14; color: #a8d4f5; font-family: 'Courier New', monospace; }
+        #app {
+            max-width: 480px; margin: 0 auto; padding: 1.5rem 1rem;
+            display: flex; flex-direction: column; gap: 1rem; min-height: 100vh;
+        }
+        #header { display: flex; align-items: baseline; justify-content: space-between; }
+        #title { font-size: 11px; letter-spacing: 0.15em; color: #4a6fa5; text-transform: uppercase; }
+        #clock { font-size: 13px; color: #6a9fd8; font-variant-numeric: tabular-nums; }
+        #canvas-wrap {
+            position: relative; border: 0.5px solid #1a2a3a;
+            border-radius: 6px; overflow: hidden; background: #060a0f;
+        }
+        canvas { display: block; width: 100%; height: 160px; }
+        #grid-label {
+            position: absolute; bottom: 6px; right: 8px;
+            font-size: 10px; color: #1e3050; letter-spacing: 0.08em;
+        }
+        #debug-box {
+            background: #060a0f; border: 0.5px solid #1a2a3a;
+            border-radius: 6px; padding: 0.75rem 1rem;
+            font-size: 12px; line-height: 2;
+        }
+        .dl { color: #8ab4d4; }
+        .dv { color: #a8d4f5; font-variant-numeric: tabular-nums; }
+        .dv.hi { color: #60a5fa; }
+        .dv.warn { color: #f87171; }
+        .dv.ok { color: #34d399; }
+        #status-text { font-size: 12px; color: #8ab4d4; letter-spacing: 0.05em; min-height: 1.4em; }
+        #btn-row { display: flex; gap: 10px; }
+        button {
+            flex: 1; padding: 0.9rem; border-radius: 6px;
+            border: 0.5px solid #1a2a3a; background: #0d1520;
+            color: #6a9fd8; font-family: 'Courier New', monospace;
+            font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase;
+            cursor: pointer; -webkit-tap-highlight-color: transparent;
+        }
+        button:active { background: #152030; }
+        #btn-start.running { border-color: #ef444450; color: #f87171; }
+        #log-box {
+            background: #060a0f; border: 0.5px solid #1a2a3a;
+            border-radius: 6px; padding: 0.75rem 1rem;
+            font-size: 11px; line-height: 1.9;
+            max-height: 220px; overflow-y: auto;
+        }
+        .ll { color: #6a8aaa; }
+        .lv { color: #a8d4f5; }
+        .lv.ok { color: #34d399; }
+        .lv.warn { color: #f87171; }
+        .lv.hi { color: #60a5fa; }
+    </style>
+</head>
+<body>
+<div id="app">
+    <div id="header">
+        <span id="title">Apnoe Monitor – Diagnose</span>
+        <span id="clock">--:--:--</span>
+    </div>
+
+    <div id="canvas-wrap">
+        <canvas id="waveCanvas"></canvas>
+        <span id="grid-label">120s</span>
+    </div>
+
+    <div id="debug-box">
+        <span class="dl">RMS live: </span><span class="dv" id="d-rms">---</span><br>
+        <span class="dl">RMS max bisher: </span><span class="dv" id="d-max">---</span><br>
+        <span class="dl">Schwellwert: </span><span class="dv" id="d-thr">---</span><br>
+        <span class="dl">dynamicMax: </span><span class="dv" id="d-dyn">---</span><br>
+        <span class="dl">Samples: </span><span class="dv" id="d-cnt">0</span><br>
+        <span class="dl">Status: </span><span class="dv" id="d-state">bereit</span>
+    </div>
+
+    <div id="status-text">bereit</div>
+
+    <div id="log-box" id="log-box">
+        <span class="ll">log startet mit Aufnahme…</span>
+    </div>
+
+    <div id="btn-row">
+        <button id="btn-start">&#9654; Start</button>
+        <button id="btn-reset">&#8634; Reset</button>
+    </div>
+</div>
+
+<script>
+    const WINDOW_S = 120;
+    const SAMPLE_HZ = 10;
+    const TOTAL_SAMPLES = WINDOW_S * SAMPLE_HZ;
+    const CALIB_S = 15;
+    const CALIB_SAMPLES = CALIB_S * SAMPLE_HZ;
+
+    let running = false;
+    let audioCtx = null, analyser = null, gainNode = null, stream = null;
+    let sampleInterval = null, rafId = null, stateCheckInterval = null;
+    let history = new Float32Array(TOTAL_SAMPLES);
+    let writeIdx = 0;
+    let threshold = 0.01;
+    let calibBuf = [];
+    let calibDone = false;
+    let dynamicMax = 0.02;
+    let rmsMax = 0;
+    let sampleCount = 0;
+
+    const canvas = document.getElementById('waveCanvas');
+    const ctx2d = canvas.getContext('2d');
+    const logBox = document.getElementById('log-box');
+
+    function resizeCanvas() {
+        canvas.width = canvas.parentElement.clientWidth;
+        canvas.height = 160;
+    }
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    function formatTime(d) {
+        return [d.getHours(), d.getMinutes(), d.getSeconds()]
+            .map(n => String(n).padStart(2, '0')).join(':');
+    }
+
+    function addLog(label, value, cls) {
+        const line = document.createElement('div');
+        line.innerHTML =
+            '<span class="ll">' + label + ': </span>' +
+            '<span class="lv ' + (cls || '') + '">' + value + '</span>';
+        logBox.appendChild(line);
+        logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    function drawGraph() {
+        const W = canvas.width, H = canvas.height;
+        ctx2d.clearRect(0, 0, W, H);
+        ctx2d.strokeStyle = '#0f1e2e'; ctx2d.lineWidth = 0.5;
+        for (let i = 1; i < 4; i++) {
+            const y = Math.round(H * i / 4) + 0.5;
+            ctx2d.beginPath(); ctx2d.moveTo(0, y); ctx2d.lineTo(W, y); ctx2d.stroke();
+        }
+        for (let i = 1; i < 6; i++) {
+            const x = Math.round(W * i / 6) + 0.5;
+            ctx2d.beginPath(); ctx2d.moveTo(x, 0); ctx2d.lineTo(x, H); ctx2d.stroke();
+        }
+        if (calibDone && dynamicMax > 0) {
+            const ty = H - (threshold / dynamicMax) * H * 0.88 - H * 0.04;
+            if (ty > 2 && ty < H - 2) {
+                ctx2d.strokeStyle = '#3b82f650'; ctx2d.lineWidth = 1;
+                ctx2d.setLineDash([4, 4]);
+                ctx2d.beginPath(); ctx2d.moveTo(0, ty); ctx2d.lineTo(W, ty); ctx2d.stroke();
+                ctx2d.setLineDash([]);
+            }
+        }
+        ctx2d.beginPath(); ctx2d.strokeStyle = '#3b82f6'; ctx2d.lineWidth = 1.5;
+        let first = true;
+        for (let i = 0; i < TOTAL_SAMPLES; i++) {
+            const val = history[(writeIdx + i) % TOTAL_SAMPLES];
+            const x = (i / (TOTAL_SAMPLES - 1)) * W;
+            const norm = dynamicMax > 0 ? Math.min(val / dynamicMax, 1) : 0;
+            const y = H - norm * H * 0.88 - H * 0.04;
+            if (first) { ctx2d.moveTo(x, y); first = false; } else ctx2d.lineTo(x, y);
+        }
+        ctx2d.stroke();
+    }
+
+    function takeSample() {
+        if (!analyser) return;
+        const buf = new Float32Array(analyser.fftSize);
+        analyser.getFloatTimeDomainData(buf);
+        let sum = 0;
+        for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+        const rms = Math.sqrt(sum / buf.length);
+        sampleCount++;
+
+        if (rms > rmsMax) rmsMax = rms;
+
+        const rmsEl = document.getElementById('d-rms');
+        rmsEl.textContent = rms.toExponential(3);
+        rmsEl.className = 'dv' + (rms > threshold ? ' hi' : rms < threshold * 0.05 ? ' warn' : '');
+        document.getElementById('d-max').textContent = rmsMax.toExponential(3);
+        document.getElementById('d-thr').textContent = threshold.toExponential(3);
+        document.getElementById('d-dyn').textContent = dynamicMax.toExponential(3);
+        document.getElementById('d-cnt').textContent = sampleCount;
+
+        if (sampleCount <= 8 || sampleCount % 20 === 0) {
+            const cls = rms > 1e-4 ? 'hi' : rms < 1e-5 ? 'warn' : '';
+            addLog('S' + sampleCount + ' rms=' + rms.toExponential(2) +
+                ' ctx=' + (audioCtx ? audioCtx.state : '?'), '', cls);
+        }
+
+        if (!calibDone) {
+            calibBuf.push(rms);
+            const pct = Math.round(calibBuf.length / CALIB_SAMPLES * 100);
+            document.getElementById('d-state').textContent = 'kalibrierung ' + pct + '%';
+            document.getElementById('status-text').textContent = 'kalibrierung läuft… ' + pct + '%';
+            if (calibBuf.length >= CALIB_SAMPLES) {
+                const sorted = [...calibBuf].sort((a, b) => a - b);
+                const p60 = sorted[Math.floor(sorted.length * 0.6)];
+                const p98 = sorted[Math.floor(sorted.length * 0.98)];
+                threshold = Math.max(p60 * 1.5, 0.003);
+                dynamicMax = Math.max(p98 * 2.5, threshold * 4, 0.01);
+                calibDone = true;
+                const stEl = document.getElementById('d-state');
+                stEl.className = 'dv ok';
+                stEl.textContent = 'aktiv | thr=' + threshold.toExponential(2);
+                document.getElementById('status-text').textContent = 'kalibrierung abgeschlossen';
+                addLog('Kalibrierung', 'thr=' + threshold.toExponential(2) + ' dyn=' + dynamicMax.toExponential(2), 'ok');
+            }
+        } else {
+            dynamicMax = Math.max(dynamicMax * 0.998 + rms * 0.002, threshold * 3);
+        }
+
+        history[writeIdx] = rms;
+        writeIdx = (writeIdx + 1) % TOTAL_SAMPLES;
+    }
+
+    function renderLoop() {
+        drawGraph();
+        document.getElementById('clock').textContent = formatTime(new Date());
+        if (running) rafId = requestAnimationFrame(renderLoop);
+    }
+
+    async function startMonitor() {
+        logBox.innerHTML = '';
+        try {
+            addLog('getUserMedia', 'anfordern…');
+            stream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: false,
+                    noiseSuppression: false,
+                    autoGainControl: false,
+                    channelCount: 1
+                },
+                video: false
+            });
+            const track = stream.getAudioTracks()[0];
+            const settings = track.getSettings();
+            addLog('Mikrofon', track.label, 'ok');
+            addLog('Track state', track.readyState, 'ok');
+            addLog('sampleRate', settings.sampleRate || '?');
+            addLog('AGC', settings.autoGainControl ? 'AN (!)' : 'aus', settings.autoGainControl ? 'warn' : 'ok');
+            addLog('noiseSuppression', settings.noiseSuppression ? 'AN (!)' : 'aus', settings.noiseSuppression ? 'warn' : 'ok');
+
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            addLog('AudioContext', audioCtx.state, audioCtx.state === 'running' ? 'ok' : 'warn');
+
+            const src = audioCtx.createMediaStreamSource(stream);
+            gainNode = audioCtx.createGain();
+            gainNode.gain.value = 10;
+            analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 4096;
+            analyser.smoothingTimeConstant = 0;
+            src.connect(gainNode);
+            gainNode.connect(analyser);
+
+            stateCheckInterval = setInterval(() => {
+                if (!audioCtx) return;
+                if (audioCtx.state !== 'running') {
+                    addLog('WARNUNG ctx', audioCtx.state, 'warn');
+                    audioCtx.resume();
+                }
+                if (track.readyState !== 'live') {
+                    addLog('WARNUNG track', track.readyState, 'warn');
+                }
+            }, 1000);
+
+            running = true;
+            calibDone = false; calibBuf = []; rmsMax = 0; sampleCount = 0;
+            dynamicMax = 0.02;
+            document.getElementById('btn-start').textContent = '■ Stop';
+            document.getElementById('btn-start').classList.add('running');
+            document.getElementById('status-text').textContent = 'kalibrierung läuft…';
+            document.getElementById('d-state').className = 'dv';
+
+            sampleInterval = setInterval(takeSample, 1000 / SAMPLE_HZ);
+            rafId = requestAnimationFrame(renderLoop);
+
+        } catch (e) {
+            addLog('FEHLER', e.message, 'warn');
+            document.getElementById('status-text').textContent = 'fehler: ' + e.message;
+        }
+    }
+
+    function stopMonitor() {
+        running = false;
+        clearInterval(sampleInterval); sampleInterval = null;
+        clearInterval(stateCheckInterval); stateCheckInterval = null;
+        cancelAnimationFrame(rafId);
+        if (stream) stream.getTracks().forEach(t => t.stop());
+        if (audioCtx) { audioCtx.close(); audioCtx = null; }
+        analyser = null; gainNode = null;
+        document.getElementById('btn-start').textContent = '▶ Start';
+        document.getElementById('btn-start').classList.remove('running');
+        document.getElementById('status-text').textContent = 'gestoppt';
+    }
+
+    function resetAll() {
+        stopMonitor();
+        history = new Float32Array(TOTAL_SAMPLES);
+        writeIdx = 0; dynamicMax = 0.02; rmsMax = 0; sampleCount = 0;
+        calibDone = false; calibBuf = [];
+        ['d-rms','d-max','d-thr','d-dyn'].forEach(id => {
+            const el = document.getElementById(id);
+            el.textContent = '---'; el.className = 'dv';
+        });
+        document.getElementById('d-cnt').textContent = '0';
+        document.getElementById('d-state').textContent = 'bereit';
+        document.getElementById('status-text').textContent = 'bereit';
+        logBox.innerHTML = '<span class="ll">log startet mit Aufnahme…</span>';
+        drawGraph();
+    }
+
+    document.getElementById('btn-start').addEventListener('click', () => {
+        if (running) stopMonitor(); else startMonitor();
+    });
+    document.getElementById('btn-reset').addEventListener('click', resetAll);
+
+    drawGraph();
+    setInterval(() => {
+        document.getElementById('clock').textContent = formatTime(new Date());
+    }, 1000);
+</script>
+</body>
+</html>
