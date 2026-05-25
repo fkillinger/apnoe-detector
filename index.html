@@ -34,6 +34,28 @@
     #breath-dot.pause  { background: #ef4444; }
     #status-text { font-size: 12px; color: #2d4a6e; letter-spacing: 0.06em; }
 
+    /* Kalibrierungs-Dialog */
+    #calib-dialog {
+      display: none; flex-direction: column; gap: 10px;
+      background: #0d1520; border: 0.5px solid #1a2a3a;
+      border-radius: 8px; padding: 1rem;
+    }
+    #calib-dialog-text {
+      font-size: 11px; color: #4a6fa5; letter-spacing: 0.05em; line-height: 1.7;
+    }
+    #calib-dialog-text span { color: #2d4a6e; }
+    #calib-dialog-btns { display: flex; gap: 8px; }
+    .calib-btn {
+      flex: 1; padding: 0.75rem 0.5rem; border-radius: 6px;
+      border: 0.5px solid #1a2a3a; background: #060a0f;
+      color: #4a6fa5; font-family: 'Courier New', monospace;
+      font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+      cursor: pointer; line-height: 1.4; text-align: center;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .calib-btn:active { background: #152030; }
+    .calib-btn.primary { border-color: #3b82f630; color: #3b82f6; }
+
     #calib-wrap { display: none; flex-direction: column; gap: 5px; }
     #calib-bar { height: 2px; background: #1a2a3a; border-radius: 1px; overflow: hidden; }
     #calib-fill { height: 100%; background: #3b82f6; width: 0%; transition: width 0.2s; }
@@ -112,6 +134,14 @@
     <span id="status-text">bereit</span>
   </div>
 
+  <div id="calib-dialog">
+    <div id="calib-dialog-text"></div>
+    <div id="calib-dialog-btns">
+      <button class="calib-btn primary" id="btn-use-saved">Letzte verwenden</button>
+      <button class="calib-btn" id="btn-new-calib">Neu kalibrieren</button>
+    </div>
+  </div>
+
   <div id="calib-wrap">
     <div id="calib-bar"><div id="calib-fill"></div></div>
     <div id="calib-text">kalibrierung…</div>
@@ -153,7 +183,7 @@
     <button id="btn-reset" title="Reset">&#8634;</button>
   </div>
 
-  <div id="version">v1.3</div>
+  <div id="version">v1.4</div>
 </div>
 
 <script>
@@ -165,6 +195,7 @@
   const PAUSE_MIN_S   = 10;
   const GAIN_BOOST    = 10;
   const BPM_WINDOW_S  = 60;
+  const STORAGE_KEY   = 'apnoe_calib_v1';
 
   function sliderToMult(v) {
     return Math.pow(10, (v - 10) / 10 * Math.log10(12));
@@ -180,6 +211,30 @@
     return 'minimal';
   }
 
+  function saveCalib(base, dynMax) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        baseThreshold: base,
+        dynamicMax: dynMax,
+        savedAt: Date.now()
+      }));
+    } catch(e) {}
+  }
+
+  function loadCalib() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch(e) { return null; }
+  }
+
+  function formatSavedTime(ts) {
+    const d = new Date(ts);
+    return [d.getDate(), d.getMonth()+1].map(n=>String(n).padStart(2,'0')).join('.') +
+      ' ' + [d.getHours(), d.getMinutes()].map(n=>String(n).padStart(2,'0')).join(':');
+  }
+
   let running = false;
   let audioCtx = null, analyser = null, gainNode = null, stream = null;
   let sampleInterval = null, rafId = null, stateCheckInterval = null;
@@ -192,10 +247,11 @@
   let calibEndTime  = null;
   let dynamicMax    = 0.02;
   let pauseActive   = false, pauseStart = null;
-  let pauseAlpha    = 0;           // 0..1 – aktuelle Rotintensität
+  let pauseAlpha    = 0;
   let events = [], longestPause = 0;
   let breathTimestamps = [];
   let lastWasBreath    = false;
+  let pendingStream    = null;  // stream geöffnet während Dialog sichtbar
 
   const canvas    = document.getElementById('waveCanvas');
   const ctx2d     = canvas.getContext('2d');
@@ -236,14 +292,12 @@
     const W = canvas.width, H = canvas.height;
     ctx2d.clearRect(0, 0, W, H);
 
-    // Hintergrund – rot tönen wenn Pause aktiv
     if (pauseAlpha > 0) {
       const a = Math.round(pauseAlpha * 30).toString(16).padStart(2,'0');
       ctx2d.fillStyle = '#ef4444' + a;
       ctx2d.fillRect(0, 0, W, H);
     }
 
-    // Gitterlinien
     ctx2d.strokeStyle = '#0d1825'; ctx2d.lineWidth = 0.5;
     for (let i = 1; i < 4; i++) {
       const y = Math.round(H * i / 4) + 0.5;
@@ -254,7 +308,6 @@
       ctx2d.beginPath(); ctx2d.moveTo(x, 0); ctx2d.lineTo(x, H); ctx2d.stroke();
     }
 
-    // Schwellwert-Linie
     if (calibDone && dynamicMax > 0) {
       const ty = H - (threshold / dynamicMax) * H * 0.88 - H * 0.04;
       if (ty > 2 && ty < H - 2) {
@@ -265,7 +318,6 @@
       }
     }
 
-    // Signalkurve – bei Pause rot, sonst blau
     ctx2d.beginPath();
     ctx2d.strokeStyle = pauseAlpha > 0.3 ? '#ef6060' : '#3b82f6';
     ctx2d.lineWidth = 1.5;
@@ -297,6 +349,16 @@
     }
   }
 
+  function applyCalib(base, dynMax) {
+    baseThreshold = base;
+    dynamicMax    = dynMax;
+    threshold     = baseThreshold * sliderToMult(parseInt(thrSlider.value));
+    calibDone     = true;
+    calibEndTime  = Date.now();
+    document.getElementById('thr-wrap').style.display  = 'flex';
+    document.getElementById('status-text').textContent = 'überwachung aktiv';
+  }
+
   function takeSample() {
     if (!analyser) return;
     const buf = new Float32Array(analyser.fftSize);
@@ -312,14 +374,11 @@
       document.getElementById('calib-text').textContent = 'kalibrierung… ' + pct + '%';
       if (calibBuf.length >= CALIB_SAMPLES) {
         const sorted = [...calibBuf].sort((a, b) => a - b);
-        baseThreshold = Math.max(sorted[Math.floor(sorted.length * 0.75)] * 1.2, 0.002);
-        threshold     = baseThreshold * sliderToMult(parseInt(thrSlider.value));
-        dynamicMax    = Math.max(sorted[Math.floor(sorted.length * 0.98)] * 2.5, threshold * 4, 0.01);
-        calibDone     = true;
-        calibEndTime  = Date.now();
+        const base   = Math.max(sorted[Math.floor(sorted.length * 0.75)] * 1.2, 0.002);
+        const dynMax = Math.max(sorted[Math.floor(sorted.length * 0.98)] * 2.5, base * 4, 0.01);
+        saveCalib(base, dynMax);
         document.getElementById('calib-wrap').style.display = 'none';
-        document.getElementById('thr-wrap').style.display   = 'flex';
-        document.getElementById('status-text').textContent  = 'überwachung aktiv';
+        applyCalib(base, dynMax);
       }
     } else {
       dynamicMax = Math.max(dynamicMax * 0.998 + rms * 0.002, threshold * 3);
@@ -337,14 +396,12 @@
           if (dur >= PAUSE_MIN_S) logEvent(dur);
           pauseActive = false; pauseStart = null;
         }
-        // Rotton langsam ausblenden
         pauseAlpha = Math.max(0, pauseAlpha - 0.08);
         dot.className    = 'active';
         stxt.textContent = 'atem erkannt';
       } else {
         if (!pauseActive) { pauseActive = true; pauseStart = Date.now(); }
         const dur = (Date.now() - pauseStart) / 1000;
-        // Rotton einblenden: ab PAUSE_MIN_S voll, davor proportional ab 3s
         if (dur >= PAUSE_MIN_S) {
           pauseAlpha = Math.min(1, pauseAlpha + 0.05);
           dot.className    = 'pause';
@@ -371,17 +428,26 @@
     if (running) rafId = requestAnimationFrame(renderLoop);
   }
 
+  function startSampling() {
+    running = true;
+    sampleInterval = setInterval(takeSample, 1000 / SAMPLE_HZ);
+    rafId = requestAnimationFrame(renderLoop);
+  }
+
   async function startMonitor() {
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
+      // Stream öffnen
+      pendingStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: false, noiseSuppression: false,
           autoGainControl: false, channelCount: 1
         },
         video: false
       });
+
+      // AudioContext aufbauen
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      const src = audioCtx.createMediaStreamSource(stream);
+      const src = audioCtx.createMediaStreamSource(pendingStream);
       gainNode  = audioCtx.createGain();
       gainNode.gain.value = GAIN_BOOST;
       analyser  = audioCtx.createAnalyser();
@@ -389,30 +455,52 @@
       analyser.smoothingTimeConstant = 0;
       src.connect(gainNode);
       gainNode.connect(analyser);
+      stream = pendingStream; pendingStream = null;
 
       stateCheckInterval = setInterval(() => {
         if (audioCtx && audioCtx.state !== 'running') audioCtx.resume();
       }, 1000);
 
-      running = true; calibDone = false; calibBuf = []; calibEndTime = null;
-      dynamicMax = 0.02; pauseActive = false; pauseStart = null; pauseAlpha = 0;
-      breathTimestamps = []; lastWasBreath = false;
-
-      document.getElementById('calib-wrap').style.display  = 'flex';
-      document.getElementById('thr-wrap').style.display    = 'none';
-      document.getElementById('calib-fill').style.width    = '0%';
-      document.getElementById('status-text').textContent   = 'kalibrierung…';
-      document.getElementById('btn-start').textContent     = '■ Stop';
+      document.getElementById('btn-start').textContent = '■ Stop';
       document.getElementById('btn-start').classList.add('running');
-      document.getElementById('stat-bpm-val').textContent  = '--';
-      document.getElementById('stat-bpm-val').className    = '';
+      document.getElementById('stat-bpm-val').textContent = '--';
+      document.getElementById('stat-bpm-val').className   = '';
 
-      sampleInterval = setInterval(takeSample, 1000 / SAMPLE_HZ);
-      rafId = requestAnimationFrame(renderLoop);
+      // Gespeicherte Kalibrierung vorhanden?
+      const saved = loadCalib();
+      if (saved) {
+        const timeStr = formatSavedTime(saved.savedAt);
+        document.getElementById('calib-dialog-text').innerHTML =
+          'Gespeicherte Kalibrierung vom <span>' + timeStr + '</span> verwenden?';
+        document.getElementById('calib-dialog').style.display = 'flex';
+      } else {
+        beginNewCalib();
+      }
+
     } catch(e) {
       document.getElementById('status-text').textContent = 'mikrofon fehler';
     }
   }
+
+  function beginNewCalib() {
+    document.getElementById('calib-dialog').style.display = 'none';
+    calibDone = false; calibBuf = [];
+    document.getElementById('calib-wrap').style.display  = 'flex';
+    document.getElementById('calib-fill').style.width    = '0%';
+    document.getElementById('status-text').textContent   = 'kalibrierung…';
+    startSampling();
+  }
+
+  function useSavedCalib() {
+    document.getElementById('calib-dialog').style.display = 'none';
+    const saved = loadCalib();
+    calibDone = false; // damit applyCalib sauber setzt
+    applyCalib(saved.baseThreshold, saved.dynamicMax);
+    startSampling();
+  }
+
+  document.getElementById('btn-use-saved').addEventListener('click', useSavedCalib);
+  document.getElementById('btn-new-calib').addEventListener('click', beginNewCalib);
 
   function stopMonitor() {
     running = false;
@@ -420,13 +508,15 @@
     clearInterval(stateCheckInterval); stateCheckInterval = null;
     cancelAnimationFrame(rafId);
     if (stream) stream.getTracks().forEach(t => t.stop());
+    if (pendingStream) pendingStream.getTracks().forEach(t => t.stop());
     if (audioCtx) { audioCtx.close(); audioCtx = null; }
-    analyser = null; gainNode = null;
+    analyser = null; gainNode = null; stream = null; pendingStream = null;
     document.getElementById('breath-dot').className       = '';
     document.getElementById('status-text').textContent    = 'gestoppt';
     document.getElementById('btn-start').textContent      = '▶ Start';
     document.getElementById('btn-start').classList.remove('running');
     document.getElementById('calib-wrap').style.display   = 'none';
+    document.getElementById('calib-dialog').style.display = 'none';
   }
 
   function resetAll() {
