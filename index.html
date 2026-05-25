@@ -50,14 +50,17 @@
     #thr-slider { width: 100%; accent-color: #3b82f6; }
     #thr-hints { display: flex; justify-content: space-between; font-size: 10px; color: #1e3050; }
 
-    #stats-row { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
+    #stats-row { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; }
     .stat-card {
       background: #0d1520; border: 0.5px solid #1a2a3a;
-      border-radius: 8px; padding: 0.85rem 1rem;
+      border-radius: 8px; padding: 0.75rem 0.85rem;
     }
-    .stat-label { font-size: 10px; letter-spacing: 0.13em; color: #2d4a6e; text-transform: uppercase; margin-bottom: 5px; }
-    .stat-value { font-size: 26px; font-weight: 500; color: #4a6fa5; font-variant-numeric: tabular-nums; }
-    .stat-unit { font-size: 12px; color: #2d4a6e; margin-left: 3px; }
+    .stat-label { font-size: 10px; letter-spacing: 0.1em; color: #2d4a6e; text-transform: uppercase; margin-bottom: 5px; }
+    .stat-value { font-size: 22px; font-weight: 500; color: #4a6fa5; font-variant-numeric: tabular-nums; }
+    .stat-unit { font-size: 11px; color: #2d4a6e; margin-left: 2px; }
+    #stat-bpm-val { color: #3b82f6; }
+    #stat-bpm-val.slow { color: #f59e0b; }
+    #stat-bpm-val.fast { color: #f87171; }
 
     #events-wrap {
       background: #0d1520; border: 0.5px solid #1a2a3a;
@@ -119,17 +122,21 @@
       <span id="thr-label">Empfindlichkeit</span>
       <span id="thr-value">normal</span>
     </div>
-    <input type="range" id="thr-slider" min="1" max="9" value="5" step="1">
+    <input type="range" id="thr-slider" min="1" max="20" value="10" step="1">
     <div id="thr-hints"><span>empfindlicher</span><span>weniger</span></div>
   </div>
 
   <div id="stats-row">
     <div class="stat-card">
-      <div class="stat-label">Pausen erkannt</div>
+      <div class="stat-label">Atemzüge</div>
+      <div class="stat-value"><span id="stat-bpm-val">--</span><span class="stat-unit">/min</span></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Pausen</div>
       <div class="stat-value" id="stat-count">0</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Längste Pause</div>
+      <div class="stat-label">Längste</div>
       <div class="stat-value" id="stat-longest">0<span class="stat-unit">s</span></div>
     </div>
   </div>
@@ -146,7 +153,7 @@
     <button id="btn-reset" title="Reset">&#8634;</button>
   </div>
 
-  <div id="version">v1.1</div>
+  <div id="version">v1.2</div>
 </div>
 
 <script>
@@ -157,27 +164,43 @@
   const CALIB_SAMPLES = CALIB_S * SAMPLE_HZ;
   const PAUSE_MIN_S   = 10;
   const GAIN_BOOST    = 10;
+  const BPM_WINDOW_S  = 60;   // Flanken in letzten 60s zählen
 
-  // Slider 1..9 → Multiplikator auf den kalibrierten Basiswert
-  // Mitte (5) = 1.0×, links (1) = 0.3×, rechts (9) = 3.0×
-  const SLIDER_MAP = [0, 0.3, 0.45, 0.65, 0.82, 1.0, 1.3, 1.7, 2.2, 3.0];
-  const SLIDER_NAMES = ['','sehr hoch','hoch','erhöht','leicht erhöht','normal','niedrig','sehr niedrig','minimal','aus'];
+  // Slider 1..20 → Multiplikator, feiner abgestuft um 1.0
+  function sliderToMult(v) {
+    // 1=0.25, 10=1.0, 20=3.0 – logarithmisch
+    return Math.pow(10, (v - 10) / 10 * Math.log10(12));
+  }
+  function sliderLabel(v) {
+    const m = sliderToMult(v);
+    if (m < 0.4)  return 'sehr hoch';
+    if (m < 0.65) return 'hoch';
+    if (m < 0.85) return 'erhöht';
+    if (m < 1.15) return 'normal';
+    if (m < 1.6)  return 'niedrig';
+    if (m < 2.2)  return 'sehr niedrig';
+    return 'minimal';
+  }
 
   let running = false;
   let audioCtx = null, analyser = null, gainNode = null, stream = null;
   let sampleInterval = null, rafId = null, stateCheckInterval = null;
-  let history      = new Float32Array(TOTAL_SAMPLES);
-  let writeIdx     = 0;
-  let baseThreshold = 0.01;   // aus Kalibrierung
-  let threshold    = 0.01;    // = baseThreshold × sliderMultiplier
-  let calibBuf     = [];
-  let calibDone    = false;
-  let dynamicMax   = 0.02;
-  let pauseActive  = false, pauseStart = null;
+  let history       = new Float32Array(TOTAL_SAMPLES);
+  let writeIdx      = 0;
+  let baseThreshold = 0.01;
+  let threshold     = 0.01;
+  let calibBuf      = [];
+  let calibDone     = false;
+  let dynamicMax    = 0.02;
+  let pauseActive   = false, pauseStart = null;
   let events = [], longestPause = 0;
 
-  const canvas   = document.getElementById('waveCanvas');
-  const ctx2d    = canvas.getContext('2d');
+  // Atemfrequenz: Zeitstempel jeder steigenden Flanke (unter→über Schwellwert)
+  let breathTimestamps = [];
+  let lastWasBreath    = false;
+
+  const canvas    = document.getElementById('waveCanvas');
+  const ctx2d     = canvas.getContext('2d');
   const thrSlider = document.getElementById('thr-slider');
   const thrValue  = document.getElementById('thr-value');
 
@@ -188,21 +211,24 @@
   resizeCanvas();
   window.addEventListener('resize', () => { resizeCanvas(); drawGraph(); });
 
-  function sliderMultiplier() {
-    return SLIDER_MAP[parseInt(thrSlider.value)];
-  }
-
   thrSlider.addEventListener('input', () => {
-    const v = parseInt(thrSlider.value);
-    thrValue.textContent = SLIDER_NAMES[v];
-    if (calibDone) {
-      threshold = baseThreshold * sliderMultiplier();
-    }
+    thrValue.textContent = sliderLabel(parseInt(thrSlider.value));
+    if (calibDone) threshold = baseThreshold * sliderToMult(parseInt(thrSlider.value));
   });
 
   function formatTime(d) {
     return [d.getHours(), d.getMinutes(), d.getSeconds()]
       .map(n => String(n).padStart(2,'0')).join(':');
+  }
+
+  function updateBpm() {
+    const now    = Date.now();
+    const cutoff = now - BPM_WINDOW_S * 1000;
+    breathTimestamps = breathTimestamps.filter(t => t > cutoff);
+    const bpm    = breathTimestamps.length;
+    const el     = document.getElementById('stat-bpm-val');
+    el.textContent = bpm;
+    el.className = bpm === 0 ? '' : bpm < 8 ? 'slow' : bpm > 20 ? 'fast' : '';
   }
 
   function drawGraph() {
@@ -282,9 +308,8 @@
       document.getElementById('calib-text').textContent = 'kalibrierung… ' + pct + '%';
       if (calibBuf.length >= CALIB_SAMPLES) {
         const sorted = [...calibBuf].sort((a, b) => a - b);
-        // Fix 1: p75 × 1.2 statt p60 × 1.5 – konservativer, robuster
         baseThreshold = Math.max(sorted[Math.floor(sorted.length * 0.75)] * 1.2, 0.002);
-        threshold     = baseThreshold * sliderMultiplier();
+        threshold     = baseThreshold * sliderToMult(parseInt(thrSlider.value));
         dynamicMax    = Math.max(sorted[Math.floor(sorted.length * 0.98)] * 2.5, threshold * 4, 0.01);
         calibDone     = true;
         document.getElementById('calib-wrap').style.display = 'none';
@@ -296,6 +321,14 @@
       const isBreath = rms > threshold;
       const dot  = document.getElementById('breath-dot');
       const stxt = document.getElementById('status-text');
+
+      // steigende Flanke → neuer Atemzug
+      if (isBreath && !lastWasBreath) {
+        breathTimestamps.push(Date.now());
+      }
+      lastWasBreath = isBreath;
+      updateBpm();
+
       if (isBreath) {
         if (pauseActive) {
           const dur = (Date.now() - pauseStart) / 1000;
@@ -352,13 +385,15 @@
 
       running = true; calibDone = false; calibBuf = [];
       dynamicMax = 0.02; pauseActive = false; pauseStart = null;
+      breathTimestamps = []; lastWasBreath = false;
 
-      document.getElementById('calib-wrap').style.display = 'flex';
-      document.getElementById('thr-wrap').style.display   = 'none';
-      document.getElementById('calib-fill').style.width   = '0%';
-      document.getElementById('status-text').textContent  = 'kalibrierung…';
-      document.getElementById('btn-start').textContent    = '■ Stop';
+      document.getElementById('calib-wrap').style.display  = 'flex';
+      document.getElementById('thr-wrap').style.display    = 'none';
+      document.getElementById('calib-fill').style.width    = '0%';
+      document.getElementById('status-text').textContent   = 'kalibrierung…';
+      document.getElementById('btn-start').textContent     = '■ Stop';
       document.getElementById('btn-start').classList.add('running');
+      document.getElementById('stat-bpm-val').textContent  = '--';
 
       sampleInterval = setInterval(takeSample, 1000 / SAMPLE_HZ);
       rafId = requestAnimationFrame(renderLoop);
@@ -375,11 +410,11 @@
     if (stream) stream.getTracks().forEach(t => t.stop());
     if (audioCtx) { audioCtx.close(); audioCtx = null; }
     analyser = null; gainNode = null;
-    document.getElementById('breath-dot').className        = '';
-    document.getElementById('status-text').textContent     = 'gestoppt';
-    document.getElementById('btn-start').textContent       = '▶ Start';
+    document.getElementById('breath-dot').className       = '';
+    document.getElementById('status-text').textContent    = 'gestoppt';
+    document.getElementById('btn-start').textContent      = '▶ Start';
     document.getElementById('btn-start').classList.remove('running');
-    document.getElementById('calib-wrap').style.display    = 'none';
+    document.getElementById('calib-wrap').style.display   = 'none';
   }
 
   function resetAll() {
@@ -389,14 +424,17 @@
     calibDone = false; calibBuf = [];
     pauseActive = false; pauseStart = null;
     events = []; longestPause = 0;
-    thrSlider.value = 5; thrValue.textContent = 'normal';
-    document.getElementById('thr-wrap').style.display   = 'none';
-    document.getElementById('stat-count').textContent   = '0';
-    document.getElementById('stat-longest').innerHTML   = '0<span class="stat-unit">s</span>';
-    document.getElementById('events-list').innerHTML    =
+    breathTimestamps = []; lastWasBreath = false;
+    thrSlider.value = 10; thrValue.textContent = 'normal';
+    document.getElementById('thr-wrap').style.display    = 'none';
+    document.getElementById('stat-count').textContent    = '0';
+    document.getElementById('stat-longest').innerHTML    = '0<span class="stat-unit">s</span>';
+    document.getElementById('stat-bpm-val').textContent  = '--';
+    document.getElementById('stat-bpm-val').className    = '';
+    document.getElementById('events-list').innerHTML     =
       '<span class="event-empty">noch keine Ereignisse</span>';
-    document.getElementById('status-text').textContent  = 'bereit';
-    document.getElementById('breath-dot').className     = '';
+    document.getElementById('status-text').textContent   = 'bereit';
+    document.getElementById('breath-dot').className      = '';
     drawGraph();
   }
 
