@@ -10,73 +10,53 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #0a0e14; color: #a8d4f5; font-family: 'Courier New', monospace; }
-
     #app {
       max-width: 480px; margin: 0 auto; padding: 1.5rem 1rem;
       display: flex; flex-direction: column; gap: 1.25rem; min-height: 100vh;
     }
-
-    #header {
-      display: flex; align-items: baseline; justify-content: space-between;
-    }
-    #title {
-      font-size: 11px; letter-spacing: 0.18em; color: #2d4a6e; text-transform: uppercase;
-    }
-    #clock {
-      font-size: 14px; color: #4a6fa5; font-variant-numeric: tabular-nums;
-    }
+    #header { display: flex; align-items: baseline; justify-content: space-between; }
+    #title { font-size: 11px; letter-spacing: 0.18em; color: #2d4a6e; text-transform: uppercase; }
+    #clock { font-size: 14px; color: #4a6fa5; font-variant-numeric: tabular-nums; }
 
     #canvas-wrap {
       position: relative; border: 0.5px solid #1a2a3a;
       border-radius: 8px; overflow: hidden; background: #060a0f;
     }
     canvas { display: block; width: 100%; height: 200px; }
-    #grid-label {
-      position: absolute; bottom: 7px; right: 10px;
-      font-size: 10px; color: #1a2d42; letter-spacing: 0.1em;
-    }
+    #grid-label { position: absolute; bottom: 7px; right: 10px; font-size: 10px; color: #1a2d42; letter-spacing: 0.1em; }
 
-    #status-bar {
-      display: flex; align-items: center; gap: 10px; min-height: 20px;
-    }
+    #status-bar { display: flex; align-items: center; gap: 10px; min-height: 20px; }
     #breath-dot {
       width: 9px; height: 9px; border-radius: 50%;
-      background: #1a2a3a; flex-shrink: 0;
-      transition: background 0.15s;
+      background: #1a2a3a; flex-shrink: 0; transition: background 0.15s;
     }
-    #breath-dot.active  { background: #3b82f6; }
-    #breath-dot.pause   { background: #ef4444; }
-    #status-text {
-      font-size: 12px; color: #2d4a6e; letter-spacing: 0.06em;
-    }
+    #breath-dot.active { background: #3b82f6; }
+    #breath-dot.pause  { background: #ef4444; }
+    #status-text { font-size: 12px; color: #2d4a6e; letter-spacing: 0.06em; }
 
     #calib-wrap { display: none; flex-direction: column; gap: 5px; }
-    #calib-bar {
-      height: 2px; background: #1a2a3a; border-radius: 1px; overflow: hidden;
-    }
-    #calib-fill {
-      height: 100%; background: #3b82f6; width: 0%;
-      transition: width 0.2s;
-    }
-    #calib-text {
-      font-size: 10px; color: #2d4a6e; letter-spacing: 0.08em; text-align: center;
-    }
+    #calib-bar { height: 2px; background: #1a2a3a; border-radius: 1px; overflow: hidden; }
+    #calib-fill { height: 100%; background: #3b82f6; width: 0%; transition: width 0.2s; }
+    #calib-text { font-size: 10px; color: #2d4a6e; letter-spacing: 0.08em; text-align: center; }
 
-    #stats-row {
-      display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px;
+    #thr-wrap {
+      display: none; flex-direction: column; gap: 6px;
+      background: #0d1520; border: 0.5px solid #1a2a3a;
+      border-radius: 8px; padding: 0.85rem 1rem;
     }
+    #thr-header { display: flex; justify-content: space-between; align-items: baseline; }
+    #thr-label { font-size: 10px; letter-spacing: 0.13em; color: #2d4a6e; text-transform: uppercase; }
+    #thr-value { font-size: 12px; color: #4a6fa5; font-variant-numeric: tabular-nums; }
+    #thr-slider { width: 100%; accent-color: #3b82f6; }
+    #thr-hints { display: flex; justify-content: space-between; font-size: 10px; color: #1e3050; }
+
+    #stats-row { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
     .stat-card {
       background: #0d1520; border: 0.5px solid #1a2a3a;
       border-radius: 8px; padding: 0.85rem 1rem;
     }
-    .stat-label {
-      font-size: 10px; letter-spacing: 0.13em; color: #2d4a6e;
-      text-transform: uppercase; margin-bottom: 5px;
-    }
-    .stat-value {
-      font-size: 26px; font-weight: 500; color: #4a6fa5;
-      font-variant-numeric: tabular-nums;
-    }
+    .stat-label { font-size: 10px; letter-spacing: 0.13em; color: #2d4a6e; text-transform: uppercase; margin-bottom: 5px; }
+    .stat-value { font-size: 26px; font-weight: 500; color: #4a6fa5; font-variant-numeric: tabular-nums; }
     .stat-unit { font-size: 12px; color: #2d4a6e; margin-left: 3px; }
 
     #events-wrap {
@@ -84,14 +64,10 @@
       border-radius: 8px; padding: 0.85rem 1rem;
       min-height: 90px; max-height: 130px; overflow-y: auto;
     }
-    #events-label {
-      font-size: 10px; letter-spacing: 0.13em; color: #2d4a6e;
-      text-transform: uppercase; margin-bottom: 9px;
-    }
+    #events-label { font-size: 10px; letter-spacing: 0.13em; color: #2d4a6e; text-transform: uppercase; margin-bottom: 9px; }
     .event-row {
       display: flex; justify-content: space-between;
-      font-size: 12px; color: #4a6fa5;
-      font-variant-numeric: tabular-nums; padding: 2px 0;
+      font-size: 12px; color: #4a6fa5; font-variant-numeric: tabular-nums; padding: 2px 0;
     }
     .event-row .dur { color: #ef4444; }
     .event-empty { font-size: 11px; color: #1e3050; font-style: italic; }
@@ -102,30 +78,22 @@
       border: 0.5px solid #1a2a3a; background: #0d1520;
       color: #4a6fa5; font-family: 'Courier New', monospace;
       font-size: 13px; letter-spacing: 0.13em; text-transform: uppercase;
-      cursor: pointer; transition: background 0.2s;
-      -webkit-tap-highlight-color: transparent;
+      cursor: pointer; -webkit-tap-highlight-color: transparent;
     }
     #btn-start:active { background: #152030; }
     #btn-start.running { border-color: #ef444445; color: #ef4444; }
-
     #btn-reset {
       padding: 0.95rem 1.1rem; border-radius: 8px;
       border: 0.5px solid #1a2a3a; background: #0d1520;
       color: #2d4a6e; font-family: 'Courier New', monospace;
-      font-size: 16px; cursor: pointer;
-      -webkit-tap-highlight-color: transparent;
+      font-size: 16px; cursor: pointer; -webkit-tap-highlight-color: transparent;
     }
     #btn-reset:active { background: #152030; }
-
-    #version {
-      font-size: 10px; color: #1a2a3a; text-align: center;
-      letter-spacing: 0.08em; padding-bottom: 0.5rem;
-    }
+    #version { font-size: 10px; color: #1a2a3a; text-align: center; letter-spacing: 0.08em; padding-bottom: 0.5rem; }
   </style>
 </head>
 <body>
 <div id="app">
-
   <div id="header">
     <span id="title">Apnoe Monitor</span>
     <span id="clock">--:--:--</span>
@@ -144,6 +112,15 @@
   <div id="calib-wrap">
     <div id="calib-bar"><div id="calib-fill"></div></div>
     <div id="calib-text">kalibrierung…</div>
+  </div>
+
+  <div id="thr-wrap">
+    <div id="thr-header">
+      <span id="thr-label">Empfindlichkeit</span>
+      <span id="thr-value">normal</span>
+    </div>
+    <input type="range" id="thr-slider" min="1" max="9" value="5" step="1">
+    <div id="thr-hints"><span>empfindlicher</span><span>weniger</span></div>
   </div>
 
   <div id="stats-row">
@@ -169,9 +146,9 @@
     <button id="btn-reset" title="Reset">&#8634;</button>
   </div>
 
-  <div id="version">v1.0</div>
-
+  <div id="version">v1.1</div>
 </div>
+
 <script>
   const WINDOW_S      = 120;
   const SAMPLE_HZ     = 10;
@@ -181,20 +158,28 @@
   const PAUSE_MIN_S   = 10;
   const GAIN_BOOST    = 10;
 
+  // Slider 1..9 → Multiplikator auf den kalibrierten Basiswert
+  // Mitte (5) = 1.0×, links (1) = 0.3×, rechts (9) = 3.0×
+  const SLIDER_MAP = [0, 0.3, 0.45, 0.65, 0.82, 1.0, 1.3, 1.7, 2.2, 3.0];
+  const SLIDER_NAMES = ['','sehr hoch','hoch','erhöht','leicht erhöht','normal','niedrig','sehr niedrig','minimal','aus'];
+
   let running = false;
   let audioCtx = null, analyser = null, gainNode = null, stream = null;
   let sampleInterval = null, rafId = null, stateCheckInterval = null;
-  let history    = new Float32Array(TOTAL_SAMPLES);
-  let writeIdx   = 0;
-  let threshold  = 0.01;
-  let calibBuf   = [];
-  let calibDone  = false;
-  let dynamicMax = 0.02;
-  let pauseActive = false, pauseStart = null;
+  let history      = new Float32Array(TOTAL_SAMPLES);
+  let writeIdx     = 0;
+  let baseThreshold = 0.01;   // aus Kalibrierung
+  let threshold    = 0.01;    // = baseThreshold × sliderMultiplier
+  let calibBuf     = [];
+  let calibDone    = false;
+  let dynamicMax   = 0.02;
+  let pauseActive  = false, pauseStart = null;
   let events = [], longestPause = 0;
 
-  const canvas  = document.getElementById('waveCanvas');
-  const ctx2d   = canvas.getContext('2d');
+  const canvas   = document.getElementById('waveCanvas');
+  const ctx2d    = canvas.getContext('2d');
+  const thrSlider = document.getElementById('thr-slider');
+  const thrValue  = document.getElementById('thr-value');
 
   function resizeCanvas() {
     canvas.width  = canvas.parentElement.clientWidth;
@@ -202,6 +187,18 @@
   }
   resizeCanvas();
   window.addEventListener('resize', () => { resizeCanvas(); drawGraph(); });
+
+  function sliderMultiplier() {
+    return SLIDER_MAP[parseInt(thrSlider.value)];
+  }
+
+  thrSlider.addEventListener('input', () => {
+    const v = parseInt(thrSlider.value);
+    thrValue.textContent = SLIDER_NAMES[v];
+    if (calibDone) {
+      threshold = baseThreshold * sliderMultiplier();
+    }
+  });
 
   function formatTime(d) {
     return [d.getHours(), d.getMinutes(), d.getSeconds()]
@@ -225,7 +222,7 @@
     if (calibDone && dynamicMax > 0) {
       const ty = H - (threshold / dynamicMax) * H * 0.88 - H * 0.04;
       if (ty > 2 && ty < H - 2) {
-        ctx2d.strokeStyle = '#1a3a5e55'; ctx2d.lineWidth = 1;
+        ctx2d.strokeStyle = '#1a3a5e70'; ctx2d.lineWidth = 1;
         ctx2d.setLineDash([4, 4]);
         ctx2d.beginPath(); ctx2d.moveTo(0, ty); ctx2d.lineTo(W, ty); ctx2d.stroke();
         ctx2d.setLineDash([]);
@@ -244,10 +241,10 @@
     ctx2d.beginPath(); ctx2d.strokeStyle = '#3b82f6'; ctx2d.lineWidth = 1.5;
     let first = true;
     for (let i = 0; i < TOTAL_SAMPLES; i++) {
-      const val = history[(writeIdx + i) % TOTAL_SAMPLES];
-      const x   = (i / (TOTAL_SAMPLES - 1)) * W;
+      const val  = history[(writeIdx + i) % TOTAL_SAMPLES];
+      const x    = (i / (TOTAL_SAMPLES - 1)) * W;
       const norm = dynamicMax > 0 ? Math.min(val / dynamicMax, 1) : 0;
-      const y   = H - norm * H * 0.88 - H * 0.04;
+      const y    = H - norm * H * 0.88 - H * 0.04;
       if (first) { ctx2d.moveTo(x, y); first = false; } else ctx2d.lineTo(x, y);
     }
     ctx2d.stroke();
@@ -285,10 +282,13 @@
       document.getElementById('calib-text').textContent = 'kalibrierung… ' + pct + '%';
       if (calibBuf.length >= CALIB_SAMPLES) {
         const sorted = [...calibBuf].sort((a, b) => a - b);
-        threshold  = Math.max(sorted[Math.floor(sorted.length * 0.6)] * 1.5, 0.003);
-        dynamicMax = Math.max(sorted[Math.floor(sorted.length * 0.98)] * 2.5, threshold * 4, 0.01);
-        calibDone  = true;
+        // Fix 1: p75 × 1.2 statt p60 × 1.5 – konservativer, robuster
+        baseThreshold = Math.max(sorted[Math.floor(sorted.length * 0.75)] * 1.2, 0.002);
+        threshold     = baseThreshold * sliderMultiplier();
+        dynamicMax    = Math.max(sorted[Math.floor(sorted.length * 0.98)] * 2.5, threshold * 4, 0.01);
+        calibDone     = true;
         document.getElementById('calib-wrap').style.display = 'none';
+        document.getElementById('thr-wrap').style.display   = 'flex';
         document.getElementById('status-text').textContent  = 'überwachung aktiv';
       }
     } else {
@@ -302,7 +302,7 @@
           if (dur >= PAUSE_MIN_S) logEvent(dur);
           pauseActive = false; pauseStart = null;
         }
-        dot.className  = 'active';
+        dot.className    = 'active';
         stxt.textContent = 'atem erkannt';
       } else {
         if (!pauseActive) { pauseActive = true; pauseStart = Date.now(); }
@@ -353,11 +353,11 @@
       running = true; calibDone = false; calibBuf = [];
       dynamicMax = 0.02; pauseActive = false; pauseStart = null;
 
-      const cw = document.getElementById('calib-wrap');
-      cw.style.display = 'flex';
-      document.getElementById('calib-fill').style.width = '0%';
-      document.getElementById('status-text').textContent = 'kalibrierung…';
-      document.getElementById('btn-start').textContent = '■ Stop';
+      document.getElementById('calib-wrap').style.display = 'flex';
+      document.getElementById('thr-wrap').style.display   = 'none';
+      document.getElementById('calib-fill').style.width   = '0%';
+      document.getElementById('status-text').textContent  = 'kalibrierung…';
+      document.getElementById('btn-start').textContent    = '■ Stop';
       document.getElementById('btn-start').classList.add('running');
 
       sampleInterval = setInterval(takeSample, 1000 / SAMPLE_HZ);
@@ -375,11 +375,11 @@
     if (stream) stream.getTracks().forEach(t => t.stop());
     if (audioCtx) { audioCtx.close(); audioCtx = null; }
     analyser = null; gainNode = null;
-    document.getElementById('breath-dot').className = '';
-    document.getElementById('status-text').textContent = 'gestoppt';
-    document.getElementById('btn-start').textContent = '▶ Start';
+    document.getElementById('breath-dot').className        = '';
+    document.getElementById('status-text').textContent     = 'gestoppt';
+    document.getElementById('btn-start').textContent       = '▶ Start';
     document.getElementById('btn-start').classList.remove('running');
-    document.getElementById('calib-wrap').style.display = 'none';
+    document.getElementById('calib-wrap').style.display    = 'none';
   }
 
   function resetAll() {
@@ -389,12 +389,14 @@
     calibDone = false; calibBuf = [];
     pauseActive = false; pauseStart = null;
     events = []; longestPause = 0;
-    document.getElementById('stat-count').textContent = '0';
-    document.getElementById('stat-longest').innerHTML = '0<span class="stat-unit">s</span>';
-    document.getElementById('events-list').innerHTML =
+    thrSlider.value = 5; thrValue.textContent = 'normal';
+    document.getElementById('thr-wrap').style.display   = 'none';
+    document.getElementById('stat-count').textContent   = '0';
+    document.getElementById('stat-longest').innerHTML   = '0<span class="stat-unit">s</span>';
+    document.getElementById('events-list').innerHTML    =
       '<span class="event-empty">noch keine Ereignisse</span>';
-    document.getElementById('status-text').textContent = 'bereit';
-    document.getElementById('breath-dot').className = '';
+    document.getElementById('status-text').textContent  = 'bereit';
+    document.getElementById('breath-dot').className     = '';
     drawGraph();
   }
 
