@@ -183,7 +183,7 @@
     <button id="btn-reset" title="Reset">&#8634;</button>
   </div>
 
-  <div id="version">v1.4.1</div>
+  <div id="version">v1.5</div>
 </div>
 
 <script>
@@ -193,6 +193,8 @@
   const CALIB_S       = 15;
   const CALIB_SAMPLES = CALIB_S * SAMPLE_HZ;
   const PAUSE_MIN_S   = 10;
+  const DEBOUNCE_ON   = 3;   // Samples über Schwellwert nötig → Atem bestätigt
+  const DEBOUNCE_OFF  = 3;   // Samples unter Schwellwert nötig → Pause bestätigt
   const GAIN_BOOST    = 10;
   const BPM_WINDOW_S  = 60;
   const STORAGE_KEY   = 'apnoe_calib_v1';
@@ -251,6 +253,8 @@
   let events = [], longestPause = 0;
   let breathTimestamps = [];
   let lastWasBreath    = false;
+  let debounceOn      = 0;   // Zähler aufeinanderfolgender Samples über Schwellwert
+  let debounceOff     = 0;   // Zähler aufeinanderfolgender Samples unter Schwellwert
   let pendingStream    = null;  // stream geöffnet während Dialog sichtbar
 
   const canvas    = document.getElementById('waveCanvas');
@@ -382,15 +386,24 @@
       }
     } else {
       dynamicMax = Math.max(dynamicMax * 0.998 + rms * 0.002, threshold * 3);
-      const isBreath = rms > threshold;
+      const rawBreath = rms > threshold;
       const dot  = document.getElementById('breath-dot');
       const stxt = document.getElementById('status-text');
 
-      if (isBreath && !lastWasBreath) breathTimestamps.push(Date.now());
-      lastWasBreath = isBreath;
+      // Debounce: Zustandswechsel nur nach DEBOUNCE_ON/_OFF aufeinanderfolgenden Samples
+      if (rawBreath) { debounceOn++; debounceOff = 0; }
+      else           { debounceOff++; debounceOn = 0; }
+
+      const confirmedBreath  = debounceOn  >= DEBOUNCE_ON;
+      const confirmedSilence = debounceOff >= DEBOUNCE_OFF;
+
+      // BPM: steigende Flanke nur bei bestätigtem Atem
+      if (confirmedBreath && !lastWasBreath) breathTimestamps.push(Date.now());
+      if (confirmedBreath)  lastWasBreath = true;
+      if (confirmedSilence) lastWasBreath = false;
       updateBpm();
 
-      if (isBreath) {
+      if (confirmedBreath) {
         if (pauseActive) {
           const dur = (Date.now() - pauseStart) / 1000;
           if (dur >= PAUSE_MIN_S) logEvent(dur);
@@ -399,7 +412,7 @@
         pauseAlpha = Math.max(0, pauseAlpha - 0.08);
         dot.className    = 'active';
         stxt.textContent = 'atem erkannt';
-      } else {
+      } else if (confirmedSilence) {
         if (!pauseActive) { pauseActive = true; pauseStart = Date.now(); }
         const dur = (Date.now() - pauseStart) / 1000;
         if (dur >= PAUSE_MIN_S) {
@@ -495,6 +508,7 @@
     document.getElementById('calib-dialog').style.display = 'none';
     const saved = loadCalib();
     breathTimestamps = []; lastWasBreath = false;
+    debounceOn = 0; debounceOff = 0;
     pauseActive = false; pauseStart = null; pauseAlpha = 0;
     calibDone = false;
     applyCalib(saved.baseThreshold, saved.dynamicMax);
@@ -529,6 +543,7 @@
     pauseActive = false; pauseStart = null;
     events = []; longestPause = 0;
     breathTimestamps = []; lastWasBreath = false;
+    debounceOn = 0; debounceOff = 0;
     thrSlider.value = 10; thrValue.textContent = 'normal';
     document.getElementById('thr-wrap').style.display    = 'none';
     document.getElementById('stat-count').textContent    = '0';
