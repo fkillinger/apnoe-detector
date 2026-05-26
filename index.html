@@ -144,7 +144,7 @@
 <body>
 <div id="app">
   <div id="header">
-    <span id="title">Apnoe Monitor <span id="ver-badge">v1.6</span></span>
+    <span id="title">Apnoe Monitor <span id="ver-badge">v1.7</span></span>
     <span id="clock">--:--:--</span>
   </div>
 
@@ -243,6 +243,7 @@
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         baseThreshold: base,
         dynamicMax: dynMax,
+        sliderValue: parseInt(thrSlider.value),
         savedAt: Date.now()
       }));
     } catch(e) {}
@@ -295,8 +296,17 @@
   window.addEventListener('resize', () => { resizeCanvas(); drawGraph(); });
 
   thrSlider.addEventListener('input', () => {
-    thrValue.textContent = sliderLabel(parseInt(thrSlider.value));
-    if (calibDone) threshold = baseThreshold * sliderToMult(parseInt(thrSlider.value));
+    const v = parseInt(thrSlider.value);
+    thrValue.textContent = sliderLabel(v);
+    if (calibDone) {
+      threshold = baseThreshold * sliderToMult(v);
+      // Slider-Position live mitspeichern
+      try {
+        const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+        stored.sliderValue = v;
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
+      } catch(e) {}
+    }
   });
 
   function formatTime(d) {
@@ -522,6 +532,7 @@
 
   function beginNewCalib() {
     document.getElementById('calib-dialog').style.display = 'none';
+    thrSlider.value = 10; thrValue.textContent = sliderLabel(10);
     calibDone = false; calibBuf = [];
     document.getElementById('calib-wrap').style.display  = 'flex';
     document.getElementById('calib-fill').style.width    = '0%';
@@ -536,6 +547,11 @@
     debounceOn = 0; debounceOff = 0;
     pauseActive = false; pauseStart = null; pauseAlpha = 0;
     calibDone = false;
+    // Slider-Position wiederherstellen
+    if (saved.sliderValue !== undefined) {
+      thrSlider.value = saved.sliderValue;
+      thrValue.textContent = sliderLabel(saved.sliderValue);
+    }
     applyCalib(saved.baseThreshold, saved.dynamicMax);
     startSampling();
   }
