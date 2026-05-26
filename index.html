@@ -16,6 +16,7 @@
     }
     #header { display: flex; align-items: baseline; justify-content: space-between; }
     #title { font-size: 11px; letter-spacing: 0.18em; color: #2d4a6e; text-transform: uppercase; }
+    #ver-badge { font-size: 10px; letter-spacing: 0.05em; color: #1e3050; margin-left: 6px; }
     #clock { font-size: 14px; color: #4a6fa5; font-variant-numeric: tabular-nums; }
 
     #canvas-wrap {
@@ -114,13 +115,12 @@
       font-size: 16px; cursor: pointer; -webkit-tap-highlight-color: transparent;
     }
     #btn-reset:active { background: #152030; }
-    #version { font-size: 10px; color: #1a2a3a; text-align: center; letter-spacing: 0.08em; padding-bottom: 0.5rem; }
   </style>
 </head>
 <body>
 <div id="app">
   <div id="header">
-    <span id="title">Apnoe Monitor</span>
+    <span id="title">Apnoe Monitor <span id="ver-badge">v1.5</span></span>
     <span id="clock">--:--:--</span>
   </div>
 
@@ -183,7 +183,6 @@
     <button id="btn-reset" title="Reset">&#8634;</button>
   </div>
 
-  <div id="version">v1.5</div>
 </div>
 
 <script>
