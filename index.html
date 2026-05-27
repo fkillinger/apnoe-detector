@@ -144,7 +144,7 @@
 <body>
 <div id="app">
   <div id="header">
-    <span id="title">Apnoe Monitor <span id="ver-badge">v1.7</span></span>
+    <span id="title">Apnoe Monitor <span id="ver-badge">v1.8</span></span>
     <span id="clock">--:--:--</span>
   </div>
 
@@ -203,9 +203,11 @@
     </div>
   </div>
 
+  <div id="log-panel" style="display:none;background:#060a0f;border:0.5px solid #1a2a3a;border-radius:8px;padding:0.85rem 1rem;max-height:200px;overflow-y:auto;font-size:10px;line-height:1.8;color:#4a6fa5;font-family:'Courier New',monospace;white-space:pre-wrap;" id="log-panel"></div>
   <div id="btn-row">
     <button id="btn-start">&#9654; Start</button>
     <button id="night-btn" title="Nachtmodus">&#9790;</button>
+    <button id="log-btn" title="Log anzeigen" style="padding:0.95rem 1.1rem;border-radius:8px;border:0.5px solid #1a2a3a;background:#0d1520;color:#2d4a6e;font-family:'Courier New',monospace;font-size:12px;cursor:pointer;-webkit-tap-highlight-color:transparent;">&#9776;</button>
     <button id="btn-reset" title="Reset">&#8634;</button>
   </div>
 
@@ -599,20 +601,47 @@
   }
 
 
+  // ── Persistenter Log ───────────────────────────────────────
+  const LOG_KEY = 'apnoe_log_v1';
+
+  function persistLog(msg) {
+    try {
+      const logs = JSON.parse(localStorage.getItem(LOG_KEY) || '[]');
+      const ts = new Date();
+      const t = [ts.getHours(), ts.getMinutes(), ts.getSeconds()]
+        .map(n => String(n).padStart(2,'0')).join(':');
+      logs.push(t + ' ' + msg);
+      if (logs.length > 200) logs.splice(0, logs.length - 200);
+      localStorage.setItem(LOG_KEY, JSON.stringify(logs));
+    } catch(e) {}
+  }
+
   // ── Wake Lock ──────────────────────────────────────────────
   let wakeLock = null;
 
   async function requestWakeLock() {
-    if (!('wakeLock' in navigator)) return;
+    if (!('wakeLock' in navigator)) {
+      persistLog('WakeLock: API nicht verfügbar');
+      return;
+    }
     try {
       wakeLock = await navigator.wakeLock.request('screen');
       document.getElementById('wakelock-dot').className = 'active';
+      persistLog('WakeLock: angefordert OK');
       wakeLock.addEventListener('release', () => {
         document.getElementById('wakelock-dot').className = 'lost';
+        persistLog('WakeLock: VERLOREN');
         wakeLock = null;
+        // Sofort neu versuchen wenn noch aktiv
+        if (running) {
+          setTimeout(() => {
+            if (running) requestWakeLock();
+          }, 1000);
+        }
       });
     } catch(e) {
       document.getElementById('wakelock-dot').className = 'lost';
+      persistLog('WakeLock: Fehler – ' + e.message);
     }
   }
 
@@ -623,8 +652,43 @@
 
   // Automatisch neu anfordern wenn Tab wieder sichtbar
   document.addEventListener('visibilitychange', async () => {
+    persistLog('Visibility: ' + document.visibilityState);
     if (document.visibilityState === 'visible' && running) {
       await requestWakeLock();
+    }
+  });
+
+  // AudioContext Watchdog – alle 30s prüfen und loggen
+  setInterval(() => {
+    if (!running) return;
+    const ctxState = audioCtx ? audioCtx.state : 'null';
+    const wlState  = wakeLock ? 'aktiv' : 'fehlt';
+    if (ctxState !== 'running' || !wakeLock) {
+      persistLog('WARNUNG ctx=' + ctxState + ' wakelock=' + wlState);
+    } else {
+      persistLog('OK ctx=' + ctxState + ' wakelock=' + wlState);
+    }
+    if (audioCtx && audioCtx.state !== 'running') {
+      audioCtx.resume();
+      persistLog('AudioContext: resume() aufgerufen');
+    }
+  }, 30000);
+
+
+  // ── Log Viewer ─────────────────────────────────────────────
+  document.getElementById('log-btn').addEventListener('click', () => {
+    const panel = document.getElementById('log-panel');
+    const visible = panel.style.display !== 'none';
+    if (visible) {
+      panel.style.display = 'none';
+    } else {
+      try {
+        const logs = JSON.parse(localStorage.getItem(LOG_KEY) || '[]');
+        panel.textContent = logs.length
+          ? logs.slice().reverse().join('\n')
+          : 'noch keine Log-Einträge';
+      } catch(e) { panel.textContent = 'Log-Fehler'; }
+      panel.style.display = 'block';
     }
   });
 
