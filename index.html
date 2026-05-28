@@ -116,6 +116,30 @@
     }
     #btn-reset:active { background: #152030; }
 
+
+    /* Geräteauswahl */
+    #device-dialog {
+      display: none; flex-direction: column; gap: 10px;
+      background: #0d1520; border: 0.5px solid #1a2a3a;
+      border-radius: 8px; padding: 1rem;
+    }
+    #device-label {
+      font-size: 10px; letter-spacing: 0.13em; color: #2d4a6e;
+      text-transform: uppercase;
+    }
+    #device-list { display: flex; flex-direction: column; gap: 6px; }
+    .device-btn {
+      padding: 0.7rem 0.9rem; border-radius: 6px;
+      border: 0.5px solid #1a2a3a; background: #060a0f;
+      color: #4a6fa5; font-family: 'Courier New', monospace;
+      font-size: 11px; letter-spacing: 0.05em;
+      cursor: pointer; text-align: left; line-height: 1.4;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .device-btn:active { background: #152030; }
+    .device-btn.selected { border-color: #3b82f650; color: #3b82f6; }
+    .device-btn .dev-type { font-size: 10px; color: #2d4a6e; display: block; margin-top: 2px; }
+
     /* Nachtmodus */
     body.night { background: #000; }
     body.night #canvas-wrap { background: #020305; border-color: #0d1520; }
@@ -144,7 +168,7 @@
 <body>
 <div id="app">
   <div id="header">
-    <span id="title">Apnoe Monitor <span id="ver-badge">v1.8</span></span>
+    <span id="title">Apnoe Monitor <span id="ver-badge">v1.9</span></span>
     <span id="clock">--:--:--</span>
   </div>
 
@@ -157,6 +181,11 @@
     <div id="breath-dot"></div>
     <span id="status-text">bereit</span>
     <div id="wakelock-dot" title="Wake Lock"></div>
+  </div>
+
+  <div id="device-dialog">
+    <div id="device-label">Mikrofon wählen</div>
+    <div id="device-list"></div>
   </div>
 
   <div id="calib-dialog">
@@ -284,6 +313,7 @@
   let debounceOn      = 0;   // Zähler aufeinanderfolgender Samples über Schwellwert
   let debounceOff     = 0;   // Zähler aufeinanderfolgender Samples unter Schwellwert
   let pendingStream    = null;  // stream geöffnet während Dialog sichtbar
+  let selectedDeviceId = null;   // gewähltes Mikrofon
 
   const canvas    = document.getElementById('waveCanvas');
   const ctx2d     = canvas.getContext('2d');
@@ -484,14 +514,51 @@
     rafId = requestAnimationFrame(renderLoop);
   }
 
+  async function showDeviceSelector() {
+    try {
+      // Erst Permission holen damit Gerätenamen sichtbar werden
+      const tmpStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      tmpStream.getTracks().forEach(t => t.stop());
+
+      const devices    = await navigator.mediaDevices.enumerateDevices();
+      const audioInputs = devices.filter(d => d.kind === 'audioinput');
+
+      const list = document.getElementById('device-list');
+      list.innerHTML = '';
+
+      audioInputs.forEach((dev, i) => {
+        const btn = document.createElement('button');
+        btn.className = 'device-btn' + (dev.deviceId === selectedDeviceId ? ' selected' : '');
+        const label = dev.label || 'Mikrofon ' + (i + 1);
+        const isDefault = dev.deviceId === 'default';
+        btn.innerHTML = label + '<span class="dev-type">' + (isDefault ? 'Standard-Gerät' : 'Externes Gerät') + '</span>';
+        btn.addEventListener('click', () => {
+          selectedDeviceId = dev.deviceId;
+          document.getElementById('device-dialog').style.display = 'none';
+          startMonitor();
+        });
+        list.appendChild(btn);
+      });
+
+      document.getElementById('device-dialog').style.display = 'flex';
+      document.getElementById('btn-start').textContent = '■ Stop';
+      document.getElementById('btn-start').classList.add('running');
+    } catch(e) {
+      document.getElementById('status-text').textContent = 'mikrofon fehler: ' + e.message;
+    }
+  }
+
   async function startMonitor() {
     try {
-      // Stream öffnen
+      // Stream mit gewähltem Gerät öffnen
+      const audioConstraints = {
+        echoCancellation: false, noiseSuppression: false,
+        autoGainControl: false, channelCount: 1
+      };
+      if (selectedDeviceId) audioConstraints.deviceId = { exact: selectedDeviceId };
+
       pendingStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: false, noiseSuppression: false,
-          autoGainControl: false, channelCount: 1
-        },
+        audio: audioConstraints,
         video: false
       });
 
@@ -575,7 +642,8 @@
     document.getElementById('btn-start').textContent      = '▶ Start';
     document.getElementById('btn-start').classList.remove('running');
     document.getElementById('calib-wrap').style.display   = 'none';
-    document.getElementById('calib-dialog').style.display = 'none';
+    document.getElementById('calib-dialog').style.display  = 'none';
+    document.getElementById('device-dialog').style.display   = 'none';
   }
 
   function resetAll() {
@@ -701,7 +769,7 @@
     document.getElementById('night-btn').classList.toggle('active', nightMode);
   });
   document.getElementById('btn-start').addEventListener('click', () => {
-    if (running) stopMonitor(); else startMonitor();
+    if (running) stopMonitor(); else showDeviceSelector();
   });
   document.getElementById('btn-reset').addEventListener('click', resetAll);
 
