@@ -140,6 +140,17 @@
     .device-btn.selected { border-color: #3b82f650; color: #3b82f6; }
     .device-btn .dev-type { font-size: 10px; color: #2d4a6e; display: block; margin-top: 2px; }
 
+
+    #report-btn {
+      padding: 0.95rem 1.1rem; border-radius: 8px;
+      border: 0.5px solid #1a2a3a; background: #0d1520;
+      color: #2d4a6e; font-family: 'Courier New', monospace;
+      font-size: 12px; cursor: pointer; letter-spacing: 0.08em;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #report-btn:active { background: #152030; }
+    #report-btn.ready { color: #34d399; border-color: #34d39940; }
+
     /* Nachtmodus */
     body.night { background: #000; }
     body.night #canvas-wrap { background: #020305; border-color: #0d1520; }
@@ -168,7 +179,7 @@
 <body>
 <div id="app">
   <div id="header">
-    <span id="title">Apnoe Monitor <span id="ver-badge">v1.9</span></span>
+    <span id="title">Apnoe Monitor <span id="ver-badge">v1.10</span></span>
     <span id="clock">--:--:--</span>
   </div>
 
@@ -236,6 +247,7 @@
   <div id="btn-row">
     <button id="btn-start">&#9654; Start</button>
     <button id="night-btn" title="Nachtmodus">&#9790;</button>
+    <button id="report-btn" title="Morning Report">REP</button>
     <button id="log-btn" title="Log anzeigen" style="padding:0.95rem 1.1rem;border-radius:8px;border:0.5px solid #1a2a3a;background:#0d1520;color:#2d4a6e;font-family:'Courier New',monospace;font-size:12px;cursor:pointer;-webkit-tap-highlight-color:transparent;">&#9776;</button>
     <button id="btn-reset" title="Reset">&#8634;</button>
   </div>
@@ -314,6 +326,9 @@
   let debounceOff     = 0;   // Zähler aufeinanderfolgender Samples unter Schwellwert
   let pendingStream    = null;  // stream geöffnet während Dialog sichtbar
   let selectedDeviceId = null;   // gewähltes Mikrofon
+  let sessionStart     = null;   // Aufnahmestart-Zeitstempel
+  let selectedDevName  = '';     // Gerätename für Report
+  let bpmHistory       = [];     // [{ t, bpm }] für Durchschnitt
 
   const canvas    = document.getElementById('waveCanvas');
   const ctx2d     = canvas.getContext('2d');
@@ -534,6 +549,7 @@
         btn.innerHTML = label + '<span class="dev-type">' + (isDefault ? 'Standard-Gerät' : 'Externes Gerät') + '</span>';
         btn.addEventListener('click', () => {
           selectedDeviceId = dev.deviceId;
+          selectedDevName  = dev.label || 'Mikrofon ' + (i + 1);
           document.getElementById('device-dialog').style.display = 'none';
           startMonitor();
         });
@@ -621,6 +637,7 @@
       thrSlider.value = saved.sliderValue;
       thrValue.textContent = sliderLabel(saved.sliderValue);
     }
+    document.getElementById('report-btn').classList.add('ready');
     applyCalib(saved.baseThreshold, saved.dynamicMax);
     startSampling();
   }
@@ -655,6 +672,8 @@
     events = []; longestPause = 0;
     breathTimestamps = []; lastWasBreath = false;
     debounceOn = 0; debounceOff = 0;
+    sessionStart = null; bpmHistory = [];
+    document.getElementById('report-btn').classList.remove('ready');
     thrSlider.value = 10; thrValue.textContent = 'normal';
     document.getElementById('thr-wrap').style.display    = 'none';
     document.getElementById('stat-count').textContent    = '0';
@@ -742,6 +761,103 @@
     }
   }, 30000);
 
+
+
+  // ── Morning Report ─────────────────────────────────────────
+  function generateReport() {
+    if (!sessionStart) {
+      alert('Keine Aufnahme vorhanden.');
+      return;
+    }
+
+    const now      = new Date();
+    const start    = new Date(sessionStart);
+    const durMs    = (calibEndTime ? now - calibEndTime : 0);
+    const durMin   = Math.round(durMs / 60000);
+    const durH     = Math.floor(durMin / 60);
+    const durM     = durMin % 60;
+
+    function fmt(d) {
+      return [d.getDate(), d.getMonth()+1, d.getFullYear()]
+        .map(n => String(n).padStart(2,'0')).join('.') + '  ' +
+        [d.getHours(), d.getMinutes(), d.getSeconds()]
+        .map(n => String(n).padStart(2,'0')).join(':');
+    }
+
+    const avgBpm = bpmHistory.length > 0
+      ? Math.round(bpmHistory.reduce((s, e) => s + e.bpm, 0) / bpmHistory.length)
+      : '--';
+
+    const lines = [];
+    lines.push('╔══════════════════════════════════════════╗');
+    lines.push('║           APNOE MONITOR – BERICHT        ║');
+    lines.push('╚══════════════════════════════════════════╝');
+    lines.push('');
+    lines.push('Datum:              ' + fmt(start));
+    lines.push('Aufnahme bis:       ' + fmt(now));
+    lines.push('Dauer:              ' + durH + 'h ' + durM + 'min');
+    lines.push('Mikrofon:           ' + (selectedDevName || 'intern'));
+    lines.push('App-Version:        v1.10');
+    lines.push('');
+    lines.push('──────────────────────────────────────────');
+    lines.push('ATEMFREQUENZ');
+    lines.push('──────────────────────────────────────────');
+    lines.push('Durchschnitt:       ' + avgBpm + ' Züge/min');
+    if (bpmHistory.length > 0) {
+      lines.push('Verlauf:');
+      bpmHistory.forEach(e => {
+        const h = Math.floor(e.elapsed / 3600);
+        const m = Math.floor((e.elapsed % 3600) / 60);
+        const t = String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
+        lines.push('  +' + t + '  →  ' + e.bpm + ' /min');
+      });
+    }
+    lines.push('');
+    lines.push('──────────────────────────────────────────');
+    lines.push('ATEMPAUSEN  (> ' + PAUSE_MIN_S + 's)');
+    lines.push('──────────────────────────────────────────');
+    lines.push('Anzahl:             ' + events.length);
+    lines.push('Längste Pause:      ' + longestPause.toFixed(0) + 's');
+    lines.push('');
+    if (events.length > 0) {
+      lines.push('Zeitpunkt          Dauer');
+      lines.push('─────────────────────────');
+      events.forEach(e => {
+        lines.push('  ' + e.t + '        ' + e.dur.toFixed(0) + 's');
+      });
+    } else {
+      lines.push('  Keine Atempausen erkannt.');
+    }
+    lines.push('');
+    lines.push('──────────────────────────────────────────');
+    lines.push('Erstellt von Apnoe Monitor v1.10');
+    lines.push('══════════════════════════════════════════');
+
+    const text     = lines.join('\n');
+    const dateStr  = [start.getFullYear(),
+                      String(start.getMonth()+1).padStart(2,'0'),
+                      String(start.getDate()).padStart(2,'0')]
+                     .join('-');
+    const filename = 'apnoe-report-' + dateStr + '.txt';
+
+    // Download
+    const blob = new Blob([text], { type: 'text/plain; charset=utf-8' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    // Web Share API als Alternative (mobile)
+    // if (navigator.share) {
+    //   navigator.share({ title: filename, text: text });
+    // }
+  }
+
+  document.getElementById('report-btn').addEventListener('click', generateReport);
 
   // ── Log Viewer ─────────────────────────────────────────────
   document.getElementById('log-btn').addEventListener('click', () => {
