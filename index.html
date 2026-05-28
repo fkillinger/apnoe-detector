@@ -179,7 +179,7 @@
 <body>
 <div id="app">
   <div id="header">
-    <span id="title">Apnoe Monitor <span id="ver-badge">v1.10</span></span>
+    <span id="title">Apnoe Monitor <span id="ver-badge">v1.11</span></span>
     <span id="clock">--:--:--</span>
   </div>
 
@@ -266,6 +266,56 @@
   const GAIN_BOOST    = 10;
   const BPM_WINDOW_S  = 60;
   const STORAGE_KEY   = 'apnoe_calib_v1';
+  const SESSION_KEY   = 'apnoe_session_v1';
+
+
+  function saveSession() {
+    try {
+      localStorage.setItem(SESSION_KEY, JSON.stringify({
+        sessionStart,
+        selectedDevName,
+        events,
+        longestPause,
+        bpmHistory,
+        lastSaved: Date.now()
+      }));
+    } catch(e) {}
+  }
+
+  function loadSession() {
+    try {
+      const raw = localStorage.getItem(SESSION_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch(e) { return null; }
+  }
+
+  function restoreSession() {
+    const s = loadSession();
+    if (!s) return;
+    sessionStart    = s.sessionStart    || null;
+    selectedDevName = s.selectedDevName || '';
+    events          = s.events          || [];
+    longestPause    = s.longestPause    || 0;
+    bpmHistory      = s.bpmHistory      || [];
+    // UI wiederherstellen
+    document.getElementById('stat-count').textContent = events.length;
+    document.getElementById('stat-longest').innerHTML =
+      longestPause.toFixed(0) + '<span class="stat-unit">s</span>';
+    const list = document.getElementById('events-list');
+    if (events.length > 0) {
+      list.innerHTML = '';
+      [...events].reverse().forEach(e => {
+        const row = document.createElement('div');
+        row.className = 'event-row';
+        row.innerHTML = '<span>' + e.t + '</span><span class="dur">' + e.dur.toFixed(0) + 's</span>';
+        list.appendChild(row);
+      });
+    }
+    if (sessionStart) {
+      document.getElementById('report-btn').classList.add('ready');
+    }
+  }
 
   function sliderToMult(v) {
     return Math.pow(10, (v - 10) / 10 * Math.log10(12));
@@ -433,6 +483,7 @@
       document.getElementById('stat-longest').innerHTML =
         dur.toFixed(0) + '<span class="stat-unit">s</span>';
     }
+    saveSession();
   }
 
   function applyCalib(base, dynMax) {
@@ -525,6 +576,7 @@
 
   function startSampling() {
     running = true;
+    if (!sessionStart) { sessionStart = Date.now(); saveSession(); }
     sampleInterval = setInterval(takeSample, 1000 / SAMPLE_HZ);
     rafId = requestAnimationFrame(renderLoop);
   }
@@ -672,7 +724,8 @@
     events = []; longestPause = 0;
     breathTimestamps = []; lastWasBreath = false;
     debounceOn = 0; debounceOff = 0;
-    sessionStart = null; bpmHistory = [];
+    sessionStart = null; bpmHistory = []; selectedDevName = '';
+    localStorage.removeItem(SESSION_KEY);
     document.getElementById('report-btn').classList.remove('ready');
     thrSlider.value = 10; thrValue.textContent = 'normal';
     document.getElementById('thr-wrap').style.display    = 'none';
@@ -797,7 +850,7 @@
     lines.push('Aufnahme bis:       ' + fmt(now));
     lines.push('Dauer:              ' + durH + 'h ' + durM + 'min');
     lines.push('Mikrofon:           ' + (selectedDevName || 'intern'));
-    lines.push('App-Version:        v1.10');
+    lines.push('App-Version:        v1.11');
     lines.push('');
     lines.push('──────────────────────────────────────────');
     lines.push('ATEMFREQUENZ');
@@ -830,7 +883,7 @@
     }
     lines.push('');
     lines.push('──────────────────────────────────────────');
-    lines.push('Erstellt von Apnoe Monitor v1.10');
+    lines.push('Erstellt von Apnoe Monitor v1.11');
     lines.push('══════════════════════════════════════════');
 
     const text     = lines.join('\n');
@@ -889,6 +942,7 @@
   });
   document.getElementById('btn-reset').addEventListener('click', resetAll);
 
+  restoreSession();
   drawGraph();
   setInterval(() => {
     document.getElementById('clock').textContent = formatTime(new Date());
