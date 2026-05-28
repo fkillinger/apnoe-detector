@@ -179,7 +179,7 @@
 <body>
 <div id="app">
   <div id="header">
-    <span id="title">Apnoe Monitor <span id="ver-badge">v1.11</span></span>
+    <span id="title">Apnoe Monitor <span id="ver-badge">v1.12</span></span>
     <span id="clock">--:--:--</span>
   </div>
 
@@ -850,7 +850,7 @@
     lines.push('Aufnahme bis:       ' + fmt(now));
     lines.push('Dauer:              ' + durH + 'h ' + durM + 'min');
     lines.push('Mikrofon:           ' + (selectedDevName || 'intern'));
-    lines.push('App-Version:        v1.11');
+    lines.push('App-Version:        v1.12');
     lines.push('');
     lines.push('──────────────────────────────────────────');
     lines.push('ATEMFREQUENZ');
@@ -883,7 +883,20 @@
     }
     lines.push('');
     lines.push('──────────────────────────────────────────');
-    lines.push('Erstellt von Apnoe Monitor v1.11');
+    lines.push('');
+    lines.push('──────────────────────────────────────────');
+    lines.push('SYSTEM LOG');
+    lines.push('──────────────────────────────────────────');
+    try {
+      const logs = JSON.parse(localStorage.getItem(LOG_KEY) || '[]');
+      if (logs.length > 0) {
+        logs.forEach(l => lines.push('  ' + l));
+      } else {
+        lines.push('  (kein Log vorhanden)');
+      }
+    } catch(e) { lines.push('  (Log-Fehler)'); }
+    lines.push('');
+    lines.push('Erstellt von Apnoe Monitor v1.12');
     lines.push('══════════════════════════════════════════');
 
     const text     = lines.join('\n');
